@@ -1,0 +1,12 @@
+Scurry relies on the following dependencies to run successfully on Windows:
+
+Interpereter: Python 3.12.x 
+(At the time of this file's creation, Python 3.13.0 has released and is not compatible with some dependencies.)
+
+Required Libraries:
+Pynput (for mouse input)
+Pygame (for app rendering)
+PyQt6 (for gui design/functionality)
+
+All other dependencies are in the standard library
+
