@@ -370,6 +370,9 @@ class mainUI(Ui_formConfig):
         #Scrollbar for "About" page
         self.vscrollAbout.valueChanged.connect(self.scroll_label)
 
+        #Scrollbar for "License" page
+        self.vscrollLicense.valueChanged.connect(self.scroll_label)
+
         #-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         #Miscellaneous UI setup
         
@@ -380,7 +383,8 @@ class mainUI(Ui_formConfig):
         #It would be really nice, however, if the user did not have to mouse-over the scrollRequirements scrollbar in order to scroll the label, but could instead mouse-over the label itself.
         self.scrollable_labels_initial_geometries = {
             self.vscrollRequirements.objectName() : (self.lblRequirements.x(), self.lblRequirements.y(), self.lblRequirements.geometry().width(), self.lblRequirements.geometry().height(), self.scrollareaRequirements.geometry().height()),
-            self.vscrollAbout.objectName() : (self.lblAbout.x(), self.lblAbout.y(), self.lblAbout.geometry().width(), self.lblAbout.geometry().height(), self.scrollareaAbout.geometry().height())
+            self.vscrollAbout.objectName() : (self.lblAbout.x(), self.lblAbout.y(), self.lblAbout.geometry().width(), self.lblAbout.geometry().height(), self.scrollareaAbout.geometry().height()),
+            self.vscrollLicense.objectName() : (self.lblLicense.x(), self.lblLicense.y(), self.lblLicense.geometry().width(), self.lblLicense.geometry().height(), self.scrollareaLicense.geometry().height())
         }
 
         #load initial custom sprite into preview
