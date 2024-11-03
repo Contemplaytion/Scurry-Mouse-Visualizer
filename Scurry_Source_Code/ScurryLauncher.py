@@ -1,6 +1,6 @@
 # PLEASE DON'T JUDGE ME--I am not a developer--this is my first app--and I did my best T_T.
 # Also I KNOW that python isn't the best language for this project. I explored the possibility of using C++ but I couldn't even figure out how to get
-#     C++ to compile. Trying to learn C++ proved way too advanced for a noob like me. :(
+# C++ to compile. Trying to learn C++ proved way too advanced for a noob like me. :(
 
 #NOTE:  It seems the pynput module is not compatible with python 3.13.0. As such, I can only claim this app to work with python 3.12.x
 
@@ -75,7 +75,7 @@ class mainUI(Ui_formConfig):
             'lower_y_boundary' : 0, 
             'upper_y_boundary' : 1080, 
 
-            'centered_cursor_mode' : False, 
+            'centered_cursor_mode' : 1, 
 
             'sensitivity' : 0.15,
             'trail_lifetime' : 0.5, 
@@ -152,7 +152,7 @@ class mainUI(Ui_formConfig):
         self.lower_y_boundary = self.spinLowerY.value()
         self.upper_y_boundary = self.spinUpperY.value()
 
-        self.centered_cursor_mode = self.cbCenteredCursorMode.isChecked()
+        self.centered_cursor_mode = self.comboCenteredCursorMode.currentIndex()
 
         self.sensitivity = self.dblspinSensitivity.value()
         self.trail_lifetime = self.dblspinTrailLifetime.value()
@@ -285,7 +285,7 @@ class mainUI(Ui_formConfig):
         self.spinUpperY.valueChanged.connect(self.update_cursor_boundaries)
 
         #Centered Cursor Mode
-        self.cbCenteredCursorMode.checkStateChanged.connect(self.toggle_centered_cursor_mode)
+        self.comboCenteredCursorMode.currentIndexChanged.connect(self.update_centered_cursor_mode)
 
         #Mouse Sensitivity
         self.dblspinSensitivity.valueChanged.connect(self.update_sens)
@@ -370,6 +370,9 @@ class mainUI(Ui_formConfig):
         #Scrollbar for "About" page
         self.vscrollAbout.valueChanged.connect(self.scroll_label)
 
+        #Scrollbar for "Known Issues" page
+        self.vscrollKnownIssues.valueChanged.connect(self.scroll_label)
+
         #Scrollbar for "License" page
         self.vscrollLicense.valueChanged.connect(self.scroll_label)
 
@@ -384,6 +387,7 @@ class mainUI(Ui_formConfig):
         self.scrollable_labels_initial_geometries = {
             self.vscrollRequirements.objectName() : (self.lblRequirements.x(), self.lblRequirements.y(), self.lblRequirements.geometry().width(), self.lblRequirements.geometry().height(), self.scrollareaRequirements.geometry().height()),
             self.vscrollAbout.objectName() : (self.lblAbout.x(), self.lblAbout.y(), self.lblAbout.geometry().width(), self.lblAbout.geometry().height(), self.scrollareaAbout.geometry().height()),
+            self.vscrollKnownIssues.objectName(): (self.lblKnownIssues.x(), self.lblKnownIssues.y(), self.lblKnownIssues.geometry().width(), self.lblKnownIssues.geometry().height(), self.scrollareaKnownIssues.geometry().height()),
             self.vscrollLicense.objectName() : (self.lblLicense.x(), self.lblLicense.y(), self.lblLicense.geometry().width(), self.lblLicense.geometry().height(), self.scrollareaLicense.geometry().height())
         }
 
@@ -517,8 +521,9 @@ class mainUI(Ui_formConfig):
                             invalid_parameters.add('lower_y_boundary')
                             invalid_parameters.add('upper_y_boundary')
 
-                    #elif key == 'centered_cursor_mode':
-                        #pass #no need to check booleans
+                    elif key == 'centered_cursor_mode':
+                        if not value in range(3):
+                            invalid_parameters.add(key)
                     elif key == 'sensitivity':
                         if not 0.01 <= value <= 10:
                             invalid_parameters.add(key)
@@ -941,18 +946,26 @@ class mainUI(Ui_formConfig):
                 message.setIcon(QMessageBox.Icon.Warning)
                 message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
                 message.setDefaultButton(QMessageBox.StandardButton.Cancel)
-                message.setText(
-                    f'Config file ({os.path.basename(filepath)}) contains missing/invalid parameters. Scurry can repair the file by substituting invalid ' +
-                    'parameters with defaults. For a detailed list, click the "Details" button below.\n\nWould you like to continue?'
-                )
+                
+                if os.path.abspath(filepath) == os.path.abspath(self.DEFAULT_CONFIG['profile_filepath']): #Default config (Scurryconfig.ini) contains invalid values. Replace invalid values with default, without giving the user a choice,
+                    message.setText(
+                        f'Default config file ({os.path.basename(filepath)}) contains missing/invalid parameters. Scurry will replace the invalid parameters with their default values. ' + 
+                        'For a detailed list, click the "Details" button below.'
+                    )
+                    message.setStandardButtons(QMessageBox.StandardButton.Ok)
+                else:
+                    message.setText(
+                        f'Config file ({os.path.basename(filepath)}) contains missing/invalid parameters. Scurry can repair the file by substituting invalid ' +
+                        'parameters with defaults. For a detailed list, click the "Details" button below.\n\nWould you like to continue?'
+                    )
+                
                 message.setDetailedText(
                 f'The following parameters were either missing from your config file or contain invalid values:\n\n{list_invalid_parameters}'
                 )
                 
                 response = message.exec()
 
-                if response == QMessageBox.StandardButton.Yes:
-
+                if response == QMessageBox.StandardButton.Yes or response == QMessageBox.StandardButton.Ok:
                     for item in typecast_config.items(): #replace all invalid parameters in typecast_config with default values, then pass on to normal load operation
                         key = item[0]
                         value = item[1]
@@ -1187,7 +1200,7 @@ class mainUI(Ui_formConfig):
         self.spinUpperY.setValue(boundaries[3])
 
         #centered_cursor_mode
-        self.cbCenteredCursorMode.setChecked(config_casche['centered_cursor_mode'])
+        self.comboCenteredCursorMode.setCurrentIndex(config_casche['centered_cursor_mode'])
 
         #sensitivity
         self.dblspinSensitivity.setValue(config_casche['sensitivity'])
@@ -1375,7 +1388,7 @@ class mainUI(Ui_formConfig):
 
             "The exact px/s speed associated with each 10th percentile is as follows: \n\n" +
             
-            "0%: 200px/s\n10%: 400px/s\n20:%: 800px/s\n30%: 1,600px/s\n40%: 3,200px/s\n50%: 6,400px/s\n60%: 12,800px/s\n70%: 25,600px/s\n80%: 51,200px/s\n90%: 128,000px/s\n100%: 256,000px/s\n\n" + 
+            "0%: 250px/s\n10%: 500px/s\n20:%: 1000px/s\n30%: 2,000px/s\n40%: 4,000px/s\n50%: 8,000px/s\n60%: 16,000px/s\n70%: 32,000px/s\n80%: 64,000px/s\n90%: 128,000px/s\n100%: 256,000px/s\n\n" + 
             
             "NOTE: The \"Sensitivity \" slider in the \"General\" tab does NOT affect how Scurry measures these speeds. Moving that slider will change how far the sprite moves on your screen, but the trail colors and speeds associated with them will stay the same. " + 
             "Likewise, your in-game mouse sensitivity will most likely not affect these speeds either, because most games will use raw input from your mouse and apply sensitivity to that. " +
@@ -1393,10 +1406,6 @@ class mainUI(Ui_formConfig):
             self.dblspinAnimationSpeed.setEnabled(False)
 
         self.update_preview(self.custom_sprite_preview_group)
-        self.config_changed()
-
-    def toggle_centered_cursor_mode(self): #enables/disables self.centered_cursor_mode and calls self.config_changed()
-        self.centered_cursor_mode = self.cbCenteredCursorMode.isChecked()
         self.config_changed()
 
     def toggle_cursor_idle_reset(self): #enables/disables self.cursor_idle_reset and calls self.config_changed()
@@ -1436,6 +1445,10 @@ class mainUI(Ui_formConfig):
     def update_app_dimensions(self): #updates the values of self.app_window_width and self.app_window_height. calls self.config_changed()
         self.app_window_width = self.spinW.value()
         self.app_window_height = self.spinH.value()
+        self.config_changed()
+
+    def update_centered_cursor_mode(self): #updates the value of self.centered_cursor_mode and calls self.config_changed()
+        self.centered_cursor_mode = self.comboCenteredCursorMode.currentIndex()
         self.config_changed()
 
     def update_circle_sprite_properties(self): #validates new values for self.circle_sprite_size and self.circle_outline_size. calls self.config_changed()

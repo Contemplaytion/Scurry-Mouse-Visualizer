@@ -1,3 +1,5 @@
+# CURRENT VERSION: V1.1.0 - 11/3/24
+
 import time
 import math
 import os
@@ -7,9 +9,15 @@ import threading
 import pygame
 from pynput import mouse
 
-#NOTE: BE. SURE. ENHANCE POINTER PRECISION. IS. TURNED. OFF. PERIOD. (Windows)
+#TODO:
+# CREATE NEW DEFAULT CONFIG FOR TRAIL COLORS
+# REDO THE DOCUMENTATION
+
+#NOTE: BE. SURE. ENHANCE POINTER PRECISION. IS. TURNED. OFF. PERIOD. (Windows Setting)
 
 #KNOWN ISSUE: Grabbing the app and dragging it along the screen does not play nice with the pynput mouse.Listener() object and causes severe lag for a few seconds before some timeout.
+#KNOWN ISSUE: the new "AUTO" mode for "CENTERED_CURSOR_MODE" is not very reliable if your mouse has a very low polling rate (as in 125Hz). This will not be a problem for you unless you use something like a really really cheap, non gaming mouse. Most gaming mice have polling rates of 1000Hz
+
 #CAUTION: I do not recommend running this app at high framerate because the cpu utilization may impact your game. I recommend keeping it at 60 FPS because that's the framerate most people will be viewing your gameplay will see.
 
 #INITIALIZE GLOBAL VARIABLES
@@ -20,14 +28,15 @@ def initialize(config_as_dictionary=None): #INITIALIZE ALL GLOBAL VARIABLES from
     
     #GLOBAL CONSTANTS
     global CURRENT_PROFILE, APP_WINDOW_HEIGHT, APP_WINDOW_WIDTH, INITIAL_SPRITE_POSITION, BACKGROUND_COLOR, FPS, UPPER_X_BOUNDARY, UPPER_Y_BOUNDARY, LOWER_X_BOUNDARY, LOWER_Y_BOUNDARY 
-    global DISABLE_MOVEMENT_IF_CURSOR_LEAVES_BOUNDARIES, CENTERED_CURSOR_MODE, CENTER_SCREEN_POS, SENSITIVITY, TRAIL_LIFETIME,ENABLE_CURSOR_IDLE_RESET, CURSOR_IDLE_RESET
+    global PROTECT_AGAINST_SPAM_MOVEMENTS, CENTERED_CURSOR_MODE, CENTER_SCREEN_POS, SENSITIVITY, TRAIL_LIFETIME, ENABLE_CURSOR_IDLE_RESET, CURSOR_IDLE_RESET, STATIONARY_IDLE_THRESHOLD
     global WRAPPING_MODE, TRAIL_THICKNESS, VELOCITY_SMOOTHING, TRAIL_SAMPLE_RATE, TRAIL_DOT_SPAWN_COOLDOWN, CIRCLE_SPRITE_SIZE, CIRCLE_SPRITE_COLOR, CIRCLE_OUTLINE_SIZE, CIRCLE_OUTLINE_COLOR
     global USE_CUSTOM_SPRITE, CUSTOM_SPRITE_SIZE, CUSTOM_SPRITE_FILEPATH, ANIMATE_SPRITE, ANIMATION_SPEED, ROTATE_SPRITE, DRAW_MOUSE_SPRITE, DRAW_TRAIL_DOTS, DRAW_TRAIL_LINES
     global SLOW_TRAIL_COLOR, MEDIUM_FAST_TRAIL_COLOR, VERY_FAST_TRAIL_COLOR, SLOW_COLOR_UPPER_BOUNDARY, MEDIUM_FAST_COLOR_LOWER_BOUNDARY, MEDIUM_FAST_COLOR_UPPER_BOUNDARY, VERY_FAST_COLOR_LOWER_BOUNDARY
     
     #GLOBAL VARIABLES
-    global cursor, cursor_pos, prev_x, prev_y, prev_velocities, last_update_time, prev_trail_dot, moving, moving_x, moving_y, buffer_x, buffer_y
-    global clock, screen, mouse_sprite, mouse_sprite_group, trail_dot_group, moving_lock, wrapping_lock
+    global cursor, prev_cursor_pos, prev_velocities, last_update_time, moving, moving_x, moving_y 
+    global frame_buffer, xy_coords_casche, clock, screen, mouse_sprite, mouse_sprite_group, trail_dot_group
+    global moving_lock, wrapping_lock
     
     if not config_as_dictionary:
         
@@ -49,7 +58,7 @@ def initialize(config_as_dictionary=None): #INITIALIZE ALL GLOBAL VARIABLES from
             'lower_y_boundary' : 0, 
             'upper_y_boundary' : 1440, 
 
-            'centered_cursor_mode' : False, 
+            'centered_cursor_mode' : 1,
 
             'sensitivity' : 0.15,
             'trail_lifetime' : 0.5, 
@@ -80,7 +89,7 @@ def initialize(config_as_dictionary=None): #INITIALIZE ALL GLOBAL VARIABLES from
 
             'slow_trail_color' : (255, 0, 0), 
             'medium_fast_trail_color' : (255, 255, 0), 
-            'very_fast_trail_color' : (125, 125, 255), 
+            'very_fast_trail_color' : (125, 125, 255), # I am colorblind. Green is not my friend.
 
             'slow_color_upper_boundary' : 30, 
             'medium_fast_color_lower_boundary' : 40, 
@@ -109,9 +118,18 @@ def initialize(config_as_dictionary=None): #INITIALIZE ALL GLOBAL VARIABLES from
     LOWER_Y_BOUNDARY = config_as_dictionary['lower_y_boundary'] 
     UPPER_Y_BOUNDARY = config_as_dictionary['upper_y_boundary']
 
-    DISABLE_MOVEMENT_IF_CURSOR_LEAVES_BOUNDARIES = True #Togglable for debug purposes...and for your sanity. Disable at your own risk.
+    PROTECT_AGAINST_SPAM_MOVEMENTS = True #Togglable for debug purposes...and for your sanity. Disable at your own risk.
 
-    CENTERED_CURSOR_MODE = config_as_dictionary['centered_cursor_mode'] #Enable if the game being played traps the cursor in the center of the screen
+    x = config_as_dictionary['centered_cursor_mode']
+    if x == 0:
+        CENTERED_CURSOR_MODE = False #Disabled
+    elif x == 1:
+        CENTERED_CURSOR_MODE = None #Automatically decide
+    elif x == 2:
+        CENTERED_CURSOR_MODE = True #Enabled
+    else:
+        CENTERED_CURSOR_MODE = False #invalid config protection.
+    
     CENTER_SCREEN_POS = ((LOWER_X_BOUNDARY + UPPER_X_BOUNDARY - 1) / 2, (LOWER_Y_BOUNDARY + UPPER_Y_BOUNDARY - 1) / 2 ) #Used for calculating movements for games that lock the cursor in the center of the screen
     #Through my experimental testing, I've learned that it is very important that floating point division is used here, and not integer division.
 
@@ -162,32 +180,32 @@ def initialize(config_as_dictionary=None): #INITIALIZE ALL GLOBAL VARIABLES from
     MEDIUM_FAST_COLOR_UPPER_BOUNDARY = config_as_dictionary['medium_fast_color_upper_boundary']
     VERY_FAST_COLOR_LOWER_BOUNDARY = config_as_dictionary['very_fast_color_lower_boundary']
     
+    STATIONARY_IDLE_THRESHOLD = 0.015 #Measured in seconds - used by the mouse_move_status() function to determine whether the mouse is stationary or moving.
+    # The value of 15 milliseconds is arbitrary but in testing I have found it to be a good balance between being nearly imperceptable to the end user, but 
+    # not so short that it interferes with the stability of the program and other functions.
+
     #-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     #INITIALIZE GLOBAL VARIABLES
     cursor = mouse.Controller() 
     
-    cursor_pos = cursor.position #is continually updated by the on_move() function to store the most recent location of the mouse cursor (independent of cursor boundaries)
-    # It is importaant to note that cursor_pos and cursor.position are function completely separately and independently in this program. the statement above is merely to give cursor_pos an initial value
-    # cursor_pos will be used to store position data received by the mouse.Listener() object, while cursor.position is an attribute of the mouse.Controller() object.
+    prev_cursor_pos = cursor.position #is continually updated by the on_move() function to store the most recent location of the mouse cursor (independent of cursor boundaries)
+    # It is important to note that prev_cursor_pos and cursor.position are function completely separately and independently in this program. the statement above is merely to give prev_cursor_pos an initial value
+    # prev_cursor_pos will be used to store position data received by the mouse.Listener() object, while cursor.position is an attribute of the mouse.Controller() object.
 
-    prev_x = cursor_pos[0] #used for computing mouse velocity
-    prev_y = cursor_pos[1]
     last_update_time = (time.time(), time.time()) #stores timestamps in the format (x update time, y update time)
-    prev_velocities = [] #used to store previous velocity values to compute moving average
+    prev_velocities = [] #used to store previous velocity values to compute moving average for Velocity Smoothing
+    #in v1.1.0, a function was added to compute a moving average--but I felt the current solution I had for velocity smoothing was efficient and self contained, so I left it.
     
     if int(VELOCITY_SMOOTHING) > 0:
         for i in range(VELOCITY_SMOOTHING):
             prev_velocities.append(0)
     
-    prev_trail_dot = (prev_x, prev_y ,time.time()) #tracks the x, y, and init time of most revently created trail dot. used for velocity calculations.
-    #I chose to use a tuple to store these because I learned that tuples are faster than lists, but now that I've seen how fast the code actually needs to be I'm not sure that this is an optimization that actually matters.
-    
+    #Used to eliminate an edge case that occurs when the cursor stops moving, but the sprite continues to move.
+    #this happens because on_move() can only be triggered by mouse move events, and there is no such thing as a mouse stop event to tell Scurry the mouse has difinitively stopped moving.
     moving = False
     moving_x = False
     moving_y = False
-
-    buffer_x = 0
-    buffer_y = 0
+    #if current_time - last_update_time > STATIONARY_IDLE_THRESHOLD, the variables above will be updated accordingly.
 
     # Initialize pygame
     pygame.init()
@@ -220,6 +238,17 @@ def initialize(config_as_dictionary=None): #INITIALIZE ALL GLOBAL VARIABLES from
     mouse_sprite_group = pygame.sprite.Group()
     mouse_sprite_group.add(mouse_sprite)
     trail_dot_group = pygame.sprite.Group()
+
+    #CREATE FRAME BUFFER - added in v1.1.0
+    frame_buffer = Frame_Buffer()
+    # In order to dynamically decide whether the cursor is being locked in the center by the game being played, Scurry will need to analyze data received over time.
+    # This was not very possible in v1.0.0 because all of the computations were done in real-time. 
+    # The solution was to create a buffer to store all relevent data needed to move the mouse sprite and create the trail effect, and then interperet data from the
+    # buffer once per frame when it comes time to move the mouse sprite. This way, Scurry will be able to analyze patterns of data in near-real time to determine
+    # whether or not the cursor is being centered by the game, while still being able to move the mouse sprite and update the trail effect in real-time.
+
+    #CREATE COORDS CASCHE -- introduced in v1.1.0 to be used to store on_move position updates while the Frame Buffer is busy doing computations.
+    xy_coords_casche = []
 
     # Use threading locks to safely access/modify shared variables
     moving_lock = threading.Lock() #used for daemon threads to safely access the last_update_time global variable
@@ -293,7 +322,7 @@ class Mouse_Sprite(pygame.sprite.Sprite):
             else:
                 pygame.draw.circle(self.image, self.color, (self.radius, self.radius), self.radius)
             
-            self.rotate_square_sprite_without_changing_rect(self.image,45) #to make the circle sprite look exactly like the preview in GUI. this line serves no other purpose and can be commented out if you would like.
+            self.rotate_square_sprite_without_changing_rect(self.image,45) #makes the circle sprite look exactly like the preview in GUI. this line serves no other purpose and can be commented out if you would like.
 
         self.rect.centerx = round(self.float_x)
         self.rect.centery = round(self.float_y)
@@ -358,8 +387,7 @@ class Mouse_Sprite(pygame.sprite.Sprite):
             self.float_x = float(self.rect.centerx)
             self.float_y = float(self.rect.centery)
 
-    def animate_sprite(self):
-        #update sprite animation and orientation if necessary
+    def animate_sprite(self): #update sprite animation and orientation if necessary
         self.animation_frame_counter += 1
 
         if self.animation_frame_counter >= self.animation_frames_before_switch:
@@ -370,14 +398,12 @@ class Mouse_Sprite(pygame.sprite.Sprite):
             else:
                 self.animation_frame += 1
 
-
         current_image = pygame.Surface((CUSTOM_SPRITE_SIZE,CUSTOM_SPRITE_SIZE))
         current_image.blit(self.frames[self.animation_frame], (0,0))
 
         if ROTATE_SPRITE: #convert (delta_x, delta_y) vector into a rotation in degrees
             delta_x = self.orientation_reference[0]
             delta_y = self.orientation_reference[1]
-            
             
             if delta_x == 0:
                 if delta_y > 0:
@@ -434,30 +460,27 @@ class Trail_Dot(pygame.sprite.Sprite): #the trail istelf will be comprised of se
         if current_time - self.init_time > TRAIL_LIFETIME:
             self.kill()
 
-    def get_color(self, velocity):
-        #The Color of a trail dot will depend of the velocity of the mouse cursor in pixels/second. see on_move() for how velocity is calculated
+    def get_color(self, velocity): #The Color of a trail dot will depend of the velocity of the mouse cursor in pixels/second. see Frame_Buffer.get_frame_deltas() for how velocity is calculated
 
         #Create a logarithmic scale for velocity        
         if velocity == 0:
             percent = 0
         else:
-            percent = 10 * math.log2(velocity / 200) 
-            #returns  0 if velocity is 200, 
-            #returns 10 if velocity is 400, 
-            #returns 20 if velocity is 800
-            #returns 30 if velocity is 1600
-            #returns 40 if velocity is 3200
-            #returns 50 if velocity is 6400
-            #returns 60 if velocity is 12800
-            #returns 70 if velocity is 25600
-            #returns 80 if velocity is 51200
-            #returns 90 if velocity is 124000
-            #returns 100 if velocity is 248000
+            percent = 10 * math.log2(velocity / 250) #updated from (velocity/200) to (velocity/250)to increase range of velocities in v1.1.0
+            #returns  0 if velocity is 250, 
+            #returns 10 if velocity is 500, 
+            #returns 20 if velocity is 1000
+            #returns 30 if velocity is 2000
+            #returns 40 if velocity is 4000
+            #returns 50 if velocity is 8000
+            #returns 60 if velocity is 16000
+            #returns 70 if velocity is 32000
+            #returns 80 if velocity is 64000
+            #returns 90 if velocity is 128000
+            #returns 100 if velocity is 256000
 
         if percent < 0: percent = 0
         if percent > 100: percent = 100
-
-        
 
         #Create parametric interpolation for 3-color linear gradient:
             #SLOW_TRAIL_COLOR | MEDIUM_FAST_TRAIL_COLOR | VERY_FAST_TRAIL_COLOR
@@ -498,6 +521,347 @@ class Trail_Dot(pygame.sprite.Sprite): #the trail istelf will be comprised of se
         return (r, g, b)
         #There are probably more versatile and efficient algorithms for this, but I didn't feel like doing the research and just winged it.    
 
+class Frame_Buffer(): #stores data received by the on_move() function in a buffer that is able to analyze data over time. Added in v1.1.0
+    def __init__(self):
+        self.min_buffer_length = 64 #minimum number of entries stored in the buffer.
+        self.max_buffer_time = 0.1 #Ideally the buffer will contain data not older than 0.1 seconds, unless trimming would cause buffer to contain less than 64 values
+        
+        #BUFFER DATA FORMAT = (0 = timestamp, 1 = on_move x, 2 = on_move y, 3 = cursor.position x, 4 = cursor.position y)
+        self.xy_coords_buffer = [] #stores data from recent mouse events that can be interpereted later
+        self.realtime_data = [] #specifically stores data received since last pygame frame.
+        
+        self.busy = False #because on_move() may try to add data to the buffer while the main program is reading and interpereting it, this variable will be used to tell on_move() to store data in xy_coords_casche until calculations have finished.
+
+        self.current_frame_time = time.time()
+        self.last_frame_time = time.time() - 1
+        self.cursor_centered = False #will be updated by self.dtermine_if_cursor_is_centered() to dynamically decide, based on data from the buffer, whether or not the game being played is actively locking the cursor in the center of the screen.
+        # The need for this arises from the fact that, in reality, games will often switch between actively centering the cursor (gameplay), and not centering the cursor (menus, etc--anywhere the cursor is visible to the player)
+
+        current_cursor_position = cursor.position #instance variable to set the values of self.x_ref and self.y_ref
+
+        self.x_ref = current_cursor_position[0] #used when interpereting data from the buffer as reference points from which to calculate delta values.
+        self.y_ref = current_cursor_position[1]
+
+        self.prev_trail_dot = (self.x_ref, self.y_ref, time.time()) #used when interpereting data from the buffer to store data about the last created trail dot. This allows for computation of velocity, which is required for creating trail dots.
+
+    def add(self, move_event_data): #a short and simple method for adding a new entry to self.xy_coords_buffer
+        self.xy_coords_buffer.append(move_event_data)
+
+    def clear(self): #a short and simple method for clearing self.xy_coords_buffer. Technically unnecessary, though, as this method is never called by Scurry.
+        self.xy_coords_buffer.clear()
+    
+    def trim(self): # used to limit the number of entries in self.xy_coords_buffer. Purges oldest entries while maintaining a minimum of 64 entries
+        current_time = time.time()
+
+        while len(self.xy_coords_buffer) > self.min_buffer_length:
+            if current_time - self.xy_coords_buffer[0][0] > self.max_buffer_time:
+                self.xy_coords_buffer.pop(0)
+            else:
+                break
+
+    def cleanup(self): #on_move() will often capture and send events that occur more or less simultaneously. This function removes duplicate entries, such that the time between two adjascent entries will never be 0.
+        pop_list = []
+
+        if not self.xy_coords_buffer == []:
+            for i in range(len(self.xy_coords_buffer))[1:]:
+                if self.xy_coords_buffer[i][0] == self.xy_coords_buffer[i - 1][0]:
+                    pop_list.insert(0, i - 1) #list indeces in reverse order ensure proper indeces are removed in the following loop
+            
+        if not pop_list == []:
+            for i in pop_list:
+                self.xy_coords_buffer.pop(i) #because removing an index affects all indeces afterwards, it is important that items are "popped" in order from largest index to smallest index
+
+    def update(self, current_time): #called once per frame to prepare the buffer for data interperetation. calls cleanup and trim functions, then analyzes self.xy_coords_buffer to determine which data has been received since last frame.
+        if not current_time == self.current_frame_time: #should be impossible, but protects against DivisionByZero error just in case.
+            self.last_frame_time = self.current_frame_time
+            self.current_frame_time = current_time
+        
+        self.cleanup()
+        self.trim()
+
+        self.realtime_data.clear()
+
+        for point in self.xy_coords_buffer: #store data received since last frame in self.realtime_data.
+            if point[0] > self.last_frame_time:
+                self.realtime_data.append(point)
+
+    def determine_if_cursor_is_centered(self): #my best attempt at creating an algortithm that decides whether or not the cursor is being centered by the game. It's not amazing, but it seems to work well enough to ship. Improvements are welcome.
+        # ALGORITHM:
+        #     PRIMARY DECIDING FACTOR: frequency of reversing direction in x and y over time (aka "sign changes")
+        #         OBSERVATION: If the cursor is actively being centered by the game or application, then we will notice that every movement away from center will eventually be followed by a movement toward the center.
+        #                      Because this happens once per frame, we can expect the freqency of these sign changes to roughly match the framerate of the game or application centering the cursor.
+        #                      We will assume that humans cannot possibly move the mouse back and forth in any given direction at even the lower end of game framerates, such as 24FPS.
+        #                      As such, we will assume that, if the sign of delta values change more frequently than a human could reproduce, then the cursor is being actively centered by the game or application
+        #
+        #     SECONDARY DECIDING FACTORS: AVERAGE (MEAN) X, AVERAGE (MEAN) Y, AVERAGE (MEAN) DISTANCE TO CENTER
+        #         These factors are used to handle edge cases that can cause the primary deciding factor to misrepresent the actual behavior of the cursor. Edge cases are documented in the code below
+        # 
+        # ALGORITHM LOGIC FLOW:
+        #     ESTABLISH FALLBACK VALUE: if the buffer cannot be interpereted (if it contains less than two entries), then return the fallback value
+        #     EXTRAPOLATE A LIST OF ORDERED DELTA X AND DELTA Y VALUES FROM THE BUFFER.
+        #         These values will be analyzed independently of their timestamps. This allows for better algorithm stability by considering fewer variables
+        #     COUNT THE NUMBER OF SIGN CHANGES CONTAINED WITHIN THE BUFFER FOR X AND Y
+        #     DETERMINE THE AMOUNT OF TIME CONTAINED BY THE BUFFER. USE TO DETERMINE THE FREQUENCY OF SIGN CHANGES FOR X AND Y
+        #
+        #     IF EITHER X OR Y CHANGES SIGN MORE THAN 23 TIMES PER SECOND:
+        #         Conclude the cursor is being actively centered by the game or application. Else conclude the cursor is NOT being centered by the game or application
+        #     COMPUTE SECONDARY DECIDING FACTORS FOR EDGE CASE HANDLING:
+        #         Compute mean_x, mean_y, and mean_distance_to_center
+        #     HANDLE EDGE CASES AND FALSE POSITIVES
+        #         I am defining a "False Positive" as any time the primary decision factor leads to the wrong conclusion about the behavior of the cursor.
+        #         In testing I have noticed a few predictable edge cases that can lead to false positives. The secondary decision factors computed above will be used to decide whether or not
+        #         a given result from the algorithm is a false positive, which can then be corrected.
+    
+        if type(CENTERED_CURSOR_MODE) == bool: #force enable/disable
+            self.cursor_centered = CENTERED_CURSOR_MODE
+        else: #automatically decide
+            cursor_centered = self.cursor_centered
+
+            if len(self.xy_coords_buffer) >= 2:
+                #Extrapolate a list of delta x and delta y values from the buffer.
+                x_pos_list = [float(item[1]) for item in self.xy_coords_buffer]
+                y_pos_list = [float(item[2]) for item in self.xy_coords_buffer]
+
+                #I have found that false positives can be reduced by applying 5 point smoothing to the position values before computing deltas
+                #This is because one of the games I was using to test the algorithm was pretty laggy when reporting the position of the cursor.
+                x_pos_list = moving_average(x_pos_list, 5)
+                y_pos_list = moving_average(y_pos_list, 5)
+
+                #Extrapolate a list of values originating from cursor.position. These will be used to determine if the cursor ever left the boundaries in the buffer timespan
+                if len(x_pos_list) == len(self.xy_coords_buffer): 
+                    cursor_x_list = [float(item[3]) for item in self.xy_coords_buffer]
+                    cursor_y_list = [float(item[4]) for item in self.xy_coords_buffer]
+                else:
+                    difference = len(self.xy_coords_buffer) - len(x_pos_list)
+                    cursor_x_list = [float(item[3]) for item in self.xy_coords_buffer[difference // 2 : difference // -2]]
+                    cursor_y_list = [float(item[4]) for item in self.xy_coords_buffer[difference // 2 : difference // -2]]
+
+                #group related elements together such that they can be iterated over.
+                lists_w_boundaries = {(LOWER_X_BOUNDARY, UPPER_X_BOUNDARY) : (x_pos_list.copy(), cursor_x_list.copy()),
+                                    (LOWER_Y_BOUNDARY, UPPER_Y_BOUNDARY) : (y_pos_list.copy(), cursor_y_list.copy())}
+
+                for item in lists_w_boundaries.items():
+                    #unpack related elements into temporary variables
+                    list = item[1][0]
+                    containable_pos_list = item[1][1]
+                    lower_boundary = item[0][0]
+                    upper_boundary = item[0][1]
+
+                    deltas_list = []            
+
+                    #given a list of positions, extrapolate a list of delta values between each two adjascent items
+                    for i in range(len(list)):
+                        pos = list[i]
+                        containable_pos = containable_pos_list[i]
+                        
+                        if not i == 0:
+                            #check if the cursor left the window boundaries at this point. we do not want to calculate deltas for this.
+                            if lower_boundary - 1 <= containable_pos <= upper_boundary + 1: 
+                                delta = pos - ref
+                            else:
+                                delta = 0
+                                
+                            deltas_list.append(delta)
+                        
+                        #same algorithm as found in self.get_frame_deltas, but written in a way that can be iterated over.
+                        if pos >= upper_boundary:
+                            ref = upper_boundary - 1
+                        elif pos <= lower_boundary:
+                            ref = lower_boundary
+                        else:
+                            ref = pos
+                    
+                    #count the number of sign changes found in the deltas list just created.
+                    #To increase the accuracy of the algorithm overall, we will define a sign change to be exclusively when a nonzero delta value is preceeded by a nonzero value of the opposite sign.
+                    #We can restrict our definition of sign change in this way because we can reasonably assume that a human would not be able to produce such an instantaneous sign change.
+                    count_sign_changes = 0
+                    current_sign = None #True if delta > 0, False if delta < 0. No change if delta = 0
+
+                    for delta in deltas_list:                    
+                        if delta > 0:
+                            if current_sign == False:
+                                count_sign_changes += 1
+
+                            current_sign = True
+                        elif delta < 0:
+                            if current_sign == True:
+                                count_sign_changes += 1
+
+                            current_sign = False
+                        elif delta == 0:
+                            current_sign = None
+
+                    lists_w_boundaries[item[0]] = count_sign_changes
+
+                x_delta_sign_changes = lists_w_boundaries[(LOWER_X_BOUNDARY, UPPER_X_BOUNDARY)]
+                y_delta_sign_changes = lists_w_boundaries[(LOWER_Y_BOUNDARY, UPPER_Y_BOUNDARY)]
+                
+                #Compute the timescope of the buffer for sign change frequency calculations
+                timestamps = [item[0] for item in self.xy_coords_buffer]
+
+                #if the cursor remains idle for a while, it can interfere with computing sign change frequency.
+                #we try to account for this by removing idle time from the buffer iteratively
+                buffer_time_scope = 0
+                for i in range(len(timestamps))[1:]:
+                    step_time = timestamps[i] - timestamps[i - 1]
+
+                    if step_time > STATIONARY_IDLE_THRESHOLD:
+                        buffer_time_scope += STATIONARY_IDLE_THRESHOLD
+                    else:
+                        buffer_time_scope += step_time
+
+                x_delta_sign_change_frequency = x_delta_sign_changes / buffer_time_scope
+                y_delta_sign_change_frequency = y_delta_sign_changes / buffer_time_scope
+
+                #primary decision factor
+                if x_delta_sign_change_frequency >= 23 or y_delta_sign_change_frequency >= 23:
+                    cursor_centered = True
+                else:
+                    cursor_centered = False
+               
+                #Compute secondary decision factors to identify false-positives and handle edge cases.
+                mean_x = calculate_mean(x_pos_list)
+                mean_y = calculate_mean(y_pos_list)
+                
+                self.distance_to_center_list= []
+
+                for i in range(len(x_pos_list)):
+                    self.distance_to_center_list.append(math.sqrt((x_pos_list[i] - CENTER_SCREEN_POS[0])**2 + (y_pos_list[i] - CENTER_SCREEN_POS[1])**2))
+                
+                mean_distance_to_center = calculate_mean(self.distance_to_center_list)
+
+                #try to eliminate false positives resulting from various edge cases by considering secondary decision factors
+                #...I wish I could come up with a more robust algorithm so I wouldn't have to chase edge cases but my brain is too small unfortunately.
+                false_positive = False
+                if cursor_centered:
+                    #if the cursor is closer to one of the edge boundaries than it is to the center of the screen:
+                    if min(
+                        min(abs(LOWER_X_BOUNDARY - mean_x), abs(UPPER_X_BOUNDARY - mean_x)), 
+                        min(abs(LOWER_Y_BOUNDARY - mean_y), abs(UPPER_Y_BOUNDARY - mean_y))
+                        ) <= mean_distance_to_center:
+                        #EDGE CASE: when the cursor is on one of  the boundaries (i.e LOWER_X_BOUNDARY, UPPER_Y_BOUNDARY, etc.),
+                            #there can be rapid changes in x_delta or y_delta which can lead to a false positive. This case is solved by computing
+                            #the distance to the nearest border, and comparing it to the distance to center. if the average cursor position is closer
+                            #to the border than to the center, then the cursor is most likely not centered.
+                        false_positive = True
+                    
+                elif not cursor_centered:
+                    if self.cursor_centered and mean_distance_to_center <= 3:
+                        #EDGE CASE: when moving the mouse extremely slowly, there are fewer mouse events registered and 
+                            #fewer sign changes as a result. we can solve this case by computing the distance of the mouse 
+                            #cursor to the center of the screen. if it is extremely close to the center of the screen, it is
+                            #most likely being actively centered by the game
+                        false_positive = True
+                
+                if false_positive:
+                    cursor_centered = not cursor_centered
+                
+                self.cursor_centered = cursor_centered
+
+    def get_frame_deltas(self): #interperets the data received since last frame, aka self.realtime_data. Returns delta values for mouse sprite. Also creates trail dots from self.realtime_data
+        delta_x, delta_y = 0, 0
+
+        if self.realtime_data == []:
+            return(delta_x, delta_y) #return 0, 0 if no realtime data was received
+        
+        #update the value of self.cursor_centered
+        self.determine_if_cursor_is_centered()
+
+        for point in self.realtime_data: 
+            #unpack data from self.realtime_data
+            timestamp = point[0]
+            x = point[1]
+            y = point[2]
+            x_containable = point[3]
+            y_containable = point[4]
+
+            #compute delta values for x and y and add to cumulative delta_x and delta_y
+            dx = x - self.x_ref
+            dy = y - self.y_ref
+            
+            if PROTECT_AGAINST_SPAM_MOVEMENTS: #Always true. This is only togglable from the source code for debug purposes.        
+                spam_movement = False
+                
+                if not ((LOWER_X_BOUNDARY  - 1) <= x_containable <= (UPPER_X_BOUNDARY + 1) and (LOWER_Y_BOUNDARY  - 1) < y_containable <= (UPPER_Y_BOUNDARY + 1)): #provide 1 extra pixel of wiggle room beyond the boundaries to ensure program stability
+                    #This works because the pynput.mouse.Controller().position attribute seems to always return a position within the monitor's boundaries, while the on_move method can return positions beyond the boundaries of the monitor.
+                    spam_movement = True
+
+                #ADDITIONAL CHECKS HERE. There is one spam movement in particular that I would like to filter out but don't know how to write logic for:
+                    #When a game snaps the cursor to a given location (i.e. when changing from non-centered to centered) a large delta value is created even though the user did not move their mouse.
+                    #I would like to filter this out, but the movement is difficult do identify CONSISTENTLY and ACCURATELY solely by looking at mouse coordinates.
+                    #I decided that that specific spam movement was infrequent enough that it wasn't worth the effort of trying to write an algorithm to detect it.
+
+                if spam_movement:
+                    dx, dy = 0, 0
+            
+            delta_x += dx
+            delta_y += dy
+
+            #determine the proper reference point from which to measure delta values during the next mouse move event.
+            if self.cursor_centered:
+                self.x_ref, self.y_ref = CENTER_SCREEN_POS[0], CENTER_SCREEN_POS[1]
+            else: 
+                #this very simple algorithm is the heart of the entire program. I spent way too long trying to reverse engineer this algorithm from experimental data, just to discover how simple the algorithm itself actually was. Oh well... I guess you can't be too thorough.
+                if x >= UPPER_X_BOUNDARY:
+                    self.x_ref = UPPER_X_BOUNDARY - 1
+                elif x <= LOWER_X_BOUNDARY:
+                    self.x_ref = LOWER_X_BOUNDARY
+                else:
+                    self.x_ref = x
+
+                if y >= UPPER_Y_BOUNDARY:
+                    self.y_ref = UPPER_Y_BOUNDARY - 1
+                elif y <= LOWER_Y_BOUNDARY:
+                    self.y_ref = LOWER_Y_BOUNDARY
+                else:
+                    self.y_ref = y
+
+            #spawn a trail dot if applicable
+            with wrapping_lock: #use lock to ensure that mouse sprite wrapped properly after reaching screen edge when mouse_sprite.wrapped_last_frame is set to TRUE. Avoids race condition in which self.first_in_line is set before sprite is wrapped and a line is drawn across the screen. 
+                if timestamp - self.prev_trail_dot[2] > TRAIL_DOT_SPAWN_COOLDOWN: #control the rate at which trail dots can be spawned
+
+                    #calculate position of new trail dot.
+                    trail_dot_float_x = mouse_sprite.float_x + (SENSITIVITY * delta_x)
+                    trail_dot_float_y = mouse_sprite.float_y + (SENSITIVITY * delta_y)
+                    
+                    #calculate velocity. we can safely re-use variables dx and dy
+                    try:
+                        if mouse_sprite.wrapped_last_frame: #do not want to count the distance moved by wrapping in velocity calculations, so we use current mouse sprite location as the location of the prev trail dot. So, in this case, dx = SENSITIVITY * delta_x
+                            self.prev_trail_dot = (mouse_sprite.float_x, mouse_sprite.float_y, self.prev_trail_dot[2])
+                        
+                        dx = (trail_dot_float_x - self.prev_trail_dot[0]) / SENSITIVITY #Divide by sensitivity to make velocity dependent on cursor movement, not sprite movement.
+                        dy = (trail_dot_float_y - self.prev_trail_dot[1]) / SENSITIVITY
+                        dt = timestamp - self.prev_trail_dot[2] #note that the distinction here between self.prev_trail_dot[2], and last_update_time. last_update_time is only relevant for determining if the cursor is moving or not--it is not useful for calculating velocity. 
+                        velocity = math.sqrt(dx ** 2 + dy ** 2) / dt
+                    except: #used just in case timestep = self.prev_trail_dot[2]. theoretically this should never happen, but in case it does it will be handled.
+                        velocity = 0
+
+                    if VELOCITY_SMOOTHING > 0:
+                        #a short algorithm for creating a moving average for velocity with VELOCITY_SMOOTHING points.
+                        sum = 0
+                        for v in prev_velocities:
+                            sum += v
+
+                        smoothed_velocity = (sum + velocity) / (len(prev_velocities) + 1)
+                        prev_velocities.append(velocity)
+                        prev_velocities.pop(0)
+                    else:
+                        smoothed_velocity = velocity
+
+                    #create a sort of marker or checkpoint in the list of trail dots to indicate where each curve starts and stops
+                    if mouse_sprite.wrapped_last_frame:
+                        dot = Trail_Dot(trail_dot_float_x, trail_dot_float_y, smoothed_velocity, first_in_line=True)
+                        mouse_sprite.wrapped_last_frame = False
+                    else:
+                        dot = Trail_Dot(trail_dot_float_x, trail_dot_float_y, smoothed_velocity)
+                    
+                    trail_dot_group.add(dot)
+                    
+                    #save trail dot for velocity calculation
+                    self.prev_trail_dot = (trail_dot_float_x, trail_dot_float_y, timestamp)
+
+        return(delta_x, delta_y)
+            
 def mouse_move_status(): #Daemon thread continuously monitors in the background and determines whether or not the mouse is moving. Also used to reset sprite if cursor_idle_reset is enabled.
     #This is used to guarantee the mouse sprite stops moving when the mouse stops moving, which resolves the paradox of handling the cursor at the edge of the screen/boundary.
     global moving, moving_x, moving_y
@@ -511,12 +875,12 @@ def mouse_move_status(): #Daemon thread continuously monitors in the background 
         # stability of other functions in the program.
         
         with moving_lock: #use lock to ensure that no function can change the value of last_update_time while in the middle of executing this logic
-            if current_time - last_update_time[0] > 0.015: #x has not moved in the past 15 milliseconds 
+            if current_time - last_update_time[0] > STATIONARY_IDLE_THRESHOLD: #x has not moved in the past 15 milliseconds 
                 moving_x = False
             else:
                 moving_x = True
 
-            if current_time - last_update_time[1] > 0.015: #y has not moved in the past 15 milliseconds
+            if current_time - last_update_time[1] > STATIONARY_IDLE_THRESHOLD: #y has not moved in the past 15 milliseconds
                 moving_y =  False
             else:
                 moving_y = True
@@ -530,127 +894,57 @@ def mouse_move_status(): #Daemon thread continuously monitors in the background 
         else:
             moving = False            
         
-        time.sleep(0.005) #check every 5 milliseconds
+        time.sleep(0.003) #check every 3 milliseconds (arbitrary)
 
-def on_move(x, y, return_delta_values=False): #tracks and stores mouse movements, creates trail effect dots, and sets value of cursor_pos tuple. Callback fucntion for mouse.listener object, but is also called by other functions.
-    #explicitly put, this function is called exactly once per frame in pygame, as well as also called after every system mouse move event. when called by a function
-    global cursor_pos, prev_x, prev_y, prev_velocities, buffer_x, buffer_y, moving_x, moving_y, last_update_time, prev_trail_dot, crash
+def on_move(x, y): #tracks and stores mouse movements, creates trail effect dots, and sets value of prev_cursor_pos tuple. Callback fucntion for mouse.listener object, but is also called by other functions.
+    global frame_buffer, prev_cursor_pos, xy_coords_casche, last_update_time
+
+    current_time = time.time()
+    containable_cursor_position = cursor.position
     
-    # at this point in the code, cursor_pos represents the previous cursor position, whereas the tuple (x,y) represents the current cursor position.
-    # keep in mind that prev_x and prev_y serve different functions than cursor_pos, and so it is important that each is used respectively.
-    # cursor_pos stores the previous values of x and y from the previous on_move() event. prev_x and prev_y are used as the reference points from which to measure delta values.
-    # because x and y can be outside the cursor boundaries, this distinction is important. 
-    # we do NOT want to use points outside of the cursor boundaries as reference points for measuring delta values.
-
+    #provide updates to last_update_time such that mosue_move_status() can determine if the mouse is moving or not.
     with moving_lock: #use lock to ensure last_update_time are updated before deciding whether the cursor is moving in mouse_move_status()
-        if not cursor_pos[0] == x:
-            last_update_time = (time.time(), last_update_time[1])
+        if not prev_cursor_pos[0] == x:
+            last_update_time = (current_time, last_update_time[1])
 
-        if not cursor_pos[1] == y:
-            last_update_time = (last_update_time[0], time.time())
+        if not prev_cursor_pos[1] == y:
+            last_update_time = (last_update_time[0], current_time)
 
-    #calculate delta values from the reference points determined during the previous mouse move event
-    dx = x - prev_x
-    dy = y - prev_y    
-
-    #protect against spam if cursor compltetely leaves boundaries. This workes because the pynput mouse.Controller().position attribute always returns a position within the monitor's boundaries, while the on_move method can return positions beyond the boundaries of the monitor.
-    if DISABLE_MOVEMENT_IF_CURSOR_LEAVES_BOUNDARIES: 
-        if not ((LOWER_X_BOUNDARY  - 1) <= cursor.position[0] <= (UPPER_X_BOUNDARY + 1) and (LOWER_Y_BOUNDARY  - 1) < cursor.position[1] <= (UPPER_Y_BOUNDARY + 1)): #provide 1 extra pixel of wiggle room beyond the boundaries to ensure program stability
-            dx, dy = 0, 0
-
-    #use a buffer to store the mouse movement data between pygame frames. the buffer will be reset when the sprite position is updated.
-    buffer_x += dx
-    buffer_y += dy
+    #pack event data into a tuple to be stored in the frame_buffer.
+    move_event_data = (current_time, x, y, containable_cursor_position[0], containable_cursor_position[1])
     
-    #determine the proper reference point from which to measure delta values during the next mouse move event.
-    if CENTERED_CURSOR_MODE:
-        prev_x, prev_y = CENTER_SCREEN_POS[0], CENTER_SCREEN_POS[1]
-    else: 
-        #this very simple algorithm is the heart of the entire program. I spent way too long trying to reverse engineer this algorithm from experimental data, just to discover how simple the algorithm itself actually was. Oh well... I guess you can't be too thorough.
-        if x >= UPPER_X_BOUNDARY:
-            prev_x = UPPER_X_BOUNDARY - 1
-        elif x <= LOWER_X_BOUNDARY:
-            prev_x = LOWER_X_BOUNDARY
+    #send event data to the buffer if not busy, else store it in the xy_coords_casche until buffer is no longer busy.
+    if not (x == 0 and y == 0):
+        if not frame_buffer.busy:
+            if len(xy_coords_casche) > 0:
+                for point in xy_coords_casche:
+                    frame_buffer.add(point)
+                xy_coords_casche.clear()
+            
+            frame_buffer.add(move_event_data)
         else:
-            prev_x = x
+            xy_coords_casche.append(move_event_data)    
 
-        if y >= UPPER_Y_BOUNDARY:
-            prev_y = UPPER_Y_BOUNDARY - 1
-        elif y <= LOWER_Y_BOUNDARY:
-            prev_y = LOWER_Y_BOUNDARY
-        else:
-            prev_y = y
+    #update prev_cursor_pos
+    prev_cursor_pos = (x,y)
 
-    cursor_pos = (x,y) #from here onwards, cursor_pos refers to the most recent mouse positon. Other functions that reference the cursor_pos variable assume it to represent the current cursor position.
-    
-    #spawn a trail dot if applicable
-    with wrapping_lock: #use lock to ensure that mouse sprite wrapped properly after reaching screen edge when mouse_sprite.wrapped_last_frame is set to TRUE. Avoids race condition in which self.first_in_line is set before sprite is wrapped and a line is drawn across the screen. 
-        current_time = time.time()
-        if current_time - prev_trail_dot[2] > TRAIL_DOT_SPAWN_COOLDOWN: #control the rate at which trail dots can be spawned
-            if moving: #don't waste resources on creating trail dots if not moving.
-                #calculate position of new trail dot.
-                trail_dot_float_x = mouse_sprite.float_x + (SENSITIVITY * buffer_x)
-                trail_dot_float_y = mouse_sprite.float_y + (SENSITIVITY * buffer_y)
-                
-                #calculate velocity
-                try:
-                    if mouse_sprite.wrapped_last_frame: #do not want to count the distance moved by wrapping in velocity calculations, so we use current mouse sprite location as the location of the prev trail dot. So, in this case, dx = SENSITIVITY * buffer_x
-                       prev_trail_dot = (mouse_sprite.float_x, mouse_sprite.float_y, prev_trail_dot[2])
-                    
-                    dx = (trail_dot_float_x - prev_trail_dot[0]) / SENSITIVITY #Divide by sensitivity to make velocity dependent on cursor movement, not sprite movement.
-                    dy = (trail_dot_float_y - prev_trail_dot[1]) / SENSITIVITY
-                    dt = current_time - prev_trail_dot[2] #note that the distinction here between prev_trail_dot[2], and last_update_time. last_update_time is only relevant for determining if the cursor is moving or not--it is not useful for calculating velocity. 
-                    velocity = math.sqrt(dx ** 2 + dy ** 2) / dt
-                except: #used just in case current_time = prev_trail_dot[2]. theoretically this should never happen, but in case it does it will be handled.
-                    velocity = 0
-
-                if VELOCITY_SMOOTHING > 0:
-                    #a short algorithm for creating a moving average for velocity with VELOCITY_SMOOTHING points.
-                    sum = 0
-                    for v in prev_velocities:
-                        sum += v
-
-                    smoothed_velocity = (sum + velocity) / (len(prev_velocities) + 1)
-                    prev_velocities.insert(0,velocity)
-                    prev_velocities.pop()
-                else:
-                    smoothed_velocity = velocity
-
-                #create a sort of marker or checkpoint in the list of trail dots to indicate where each curve starts and stops
-                if mouse_sprite.wrapped_last_frame:
-                    dot = Trail_Dot(trail_dot_float_x, trail_dot_float_y, smoothed_velocity, first_in_line=True)
-                    mouse_sprite.wrapped_last_frame = False
-                else:
-                    dot = Trail_Dot(trail_dot_float_x, trail_dot_float_y, smoothed_velocity)
-                
-                trail_dot_group.add(dot)
-                
-                #save trail dot for velocity calculation
-                prev_trail_dot = (trail_dot_float_x, trail_dot_float_y, current_time)
-
-    if return_delta_values: #Function called by another function, and not by mouse event callback
-        
-        delta_x = buffer_x
-        delta_y = buffer_y
-        
-        buffer_x = 0
-        buffer_y = 0
-
-        return(delta_x, delta_y)    
-        
 def update_game_state(): #calls all update functions for each frame
-    global cursor_pos
+    global frame_buffer
     current_time = time.time()
 
-    #get delta values. assume delta values of 0 if not moving.
-    if moving: delta_x, delta_y = on_move(cursor_pos[0],cursor_pos[1], return_delta_values=True)
+    frame_buffer.busy = True
+    
+    frame_buffer.update(current_time)
+    delta_x, delta_y = frame_buffer.get_frame_deltas()
+    
+    frame_buffer.busy = False
+
     if not moving_x: delta_x = 0 #necessary to eliminate edge case in which cursor sits stationary on or above upper_x_boundary and perpetually receives a false delta_x until next mouse move event.
     if not moving_y: delta_y = 0 #the solution is to only allow the sprite to move for at most 15 milliseconds before the program determines that the cursor has difinitively stopped moving. see mouse_move_status()
 
-    
     mouse_sprite.update(delta_x, delta_y) #moves the mouse sprite to its next location
     trail_dot_group.update(current_time) #despawns any trail dots that have reached their end of lifetime
-
+    
 def draw_trail(): #draws the trail effect to the screen.
     counter = 0
     trail_layer = pygame.Surface((APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT)) #create a new transparent surface to contstruct our trail on. idk if this intermediate step is actually necessary but it feels right to me.
@@ -681,8 +975,47 @@ def draw_frame(): #calls all functions required to draw each frame
     if DRAW_TRAIL_DOTS: trail_dot_group.draw(screen)
     if DRAW_MOUSE_SPRITE: mouse_sprite_group.draw(screen)
 
+def moving_average(list_of_floats, odd_number_of_points): #A short, homemade function to apply a moving average to a set of floating point numbers. used by frame_buffer.determine_if_cursor_is_centered()
+    smoothed_list = []
+
+    odd_number_of_points = abs(int(odd_number_of_points))
+
+    if odd_number_of_points % 2 == 0:
+        raise ValueError
+
+    lower_bound = odd_number_of_points // 2
+    upper_bound = odd_number_of_points // -2
+
+    if len(list_of_floats) >= odd_number_of_points and odd_number_of_points > 1:
+        for i in range(len(list_of_floats))[lower_bound:upper_bound]:
+            sum = 0
+            for n in range(odd_number_of_points):
+                sum += list_of_floats[i - lower_bound + n]
+            
+            smoothed_item = sum / odd_number_of_points
+            smoothed_list.append(smoothed_item)
+        
+        return smoothed_list
+    else:
+        return list_of_floats
+        
+def calculate_mean(list_of_floats): #A short, homemade function to calculate the mean value of a list of floating point numbers.
+    length = len(list_of_floats)
+    
+    if length == 0:
+        mean = None
+    else:
+        sum = 0
+        for float in list_of_floats:
+            sum += float
+        
+        mean = sum / length
+    
+    return mean
+
 def run(config_as_dictionary=None): #main function. calls initialization function, starts and stops background threads, contains game loop and event handler, and contains clean-up code.
     initialize(config_as_dictionary) #initializes all global constants and variables. used to prevent unintended code execution should this file be imported to another file.
+
     #Initialize daemon threads
     mouse_moving_status = threading.Thread(target=mouse_move_status, daemon=True)
     mouse_moving_status.start()
@@ -690,8 +1023,10 @@ def run(config_as_dictionary=None): #main function. calls initialization functio
     mouse_listener = mouse.Listener(on_move=on_move)
     mouse_listener.start()
 
-    #main game loop
-    sys_exit = False
+    
+    sys_exit = False #used to close both the Scurry application and the Scurry launcher completely if the user clicks the red x on the pygame window
+    
+    #main loop
     running = True
     while running: 
         #event handler
