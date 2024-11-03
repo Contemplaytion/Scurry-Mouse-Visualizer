@@ -1384,7 +1384,7 @@ class mainUI(Ui_formConfig):
         infomessage.setDetailedText(
             "Scurry measures mouse velocity in pixels/second (px/s). It converts that velocity to a number between 1 and 100 by using the following logarithmic scale: \n\n" + 
 
-            "percent = 10*log2(velocity/200) \n\n" +
+            "percent = 10*log2(velocity/250) \n\n" +
 
             "The exact px/s speed associated with each 10th percentile is as follows: \n\n" +
             

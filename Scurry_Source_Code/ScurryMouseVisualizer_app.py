@@ -1,4 +1,4 @@
-# CURRENT VERSION: V1.1.0 - 11/3/24
+# CURRENT VERSION: V1.1.1 - 11/3/24
 
 import time
 import math
@@ -8,10 +8,6 @@ import threading
 
 import pygame
 from pynput import mouse
-
-#TODO:
-# CREATE NEW DEFAULT CONFIG FOR TRAIL COLORS
-# REDO THE DOCUMENTATION
 
 #NOTE: BE. SURE. ENHANCE POINTER PRECISION. IS. TURNED. OFF. PERIOD. (Windows Setting)
 
