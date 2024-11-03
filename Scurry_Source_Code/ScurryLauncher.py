@@ -1392,7 +1392,7 @@ class mainUI(Ui_formConfig):
             
             "NOTE: The \"Sensitivity \" slider in the \"General\" tab does NOT affect how Scurry measures these speeds. Moving that slider will change how far the sprite moves on your screen, but the trail colors and speeds associated with them will stay the same. " + 
             "Likewise, your in-game mouse sensitivity will most likely not affect these speeds either, because most games will use raw input from your mouse and apply sensitivity to that. " +
-            "However, changing your mouse DPI, or changing your pointer speed in your OS WILL affect the speeds that Scurry calculates. However, there should be enough wiggle room between 200px/s and 256,000px/s for you to adjust the gradient to your liking, regardless of your DPI or pointer speed."
+            "However, changing your mouse DPI, or changing your pointer speed in your OS WILL affect the speeds that Scurry calculates. However, there should be enough wiggle room between 250px/s and 256,000px/s for you to adjust the gradient to your liking, regardless of your DPI or pointer speed."
         )
 
         infomessage.exec()        
