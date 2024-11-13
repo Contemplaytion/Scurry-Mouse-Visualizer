@@ -29,14 +29,14 @@ Some key features of Scurry:
 - Windows Only:
     - Due to my limitations as a brand-new developer, I'm only able to guarentee stability/functionality of this software on Windows. I tried to test it in an Ubuntu VM, but I ran into some problems caused by linux sandboxing, and I don't know enough about linux to solve them, or even if they are solveable.
 
-
-- Requires Python 3.12.x (if not running binary version):
-   - I originally started building the app using python 3.12.6. However, when python 3.13.0 came out recently, I tested the app out with the new interpereter, and found that some libraries don't seem to be compatible. However, I found that the app is fully compatible with Python 3.12.7 (archived).
-
-- Python Dependencies (required libraries):
-    - pynput (for handling mouse input data)
-    - Pygame (for rendering the graphics)
-    - PyQt6 (for constructing and running the GUI)
+- IF NOT RUNNING .exe VERSION:
+    - Requires Python 3.12.x:
+       - I originally started building the app using python 3.12.6. However, when python 3.13.0 came out recently, I tested the app out with the new interpereter, and found that some libraries don't seem to be compatible. However, I found that the app is fully compatible with Python 3.12.7 (archived).
+    
+    - Python Dependencies (required libraries):
+        - pynput (for handling mouse input data)
+        - Pygame (for rendering the graphics)
+        - PyQt6 (for constructing and running the GUI)
 
 # Installation:
 
